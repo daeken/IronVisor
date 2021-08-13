@@ -19,7 +19,11 @@ namespace IronVisor {
 	public enum MemoryFlags {
 		Read = 1, 
 		Write = 2, 
-		Exec = 4
+		Exec = 4, 
+		RW = Read | Write, 
+		RX = Read | Exec, 
+		WX = Write | Exec, 
+		RWX = Read | Write | Exec, 
 	}
 	
 	public class Vm : IDisposable {

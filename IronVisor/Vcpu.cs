@@ -1,13 +1,15 @@
 using System;
+using System.Numerics;
 using System.Runtime.InteropServices;
+using System.Runtime.Intrinsics;
 using System.Threading;
 
 namespace IronVisor {
 	public enum ExitReason : uint {
 		/*! asynchronous exit requested explicitly by hv_vcpus_exit() call */
-		HV_EXIT_REASON_CANCELED,
+		Canceled,
 		/*! synchronous exception to EL2 triggered by the guest */
-		HV_EXIT_REASON_EXCEPTION,
+		Exception,
 		/*!
 		 * ARM Generic VTimer became pending since the last hv_vcpu_run() call
 		 * returned. The caller is expected to make the interrupt corresponding to
@@ -18,12 +20,22 @@ namespace IronVisor {
 		 * with hv_vcpu_set_vtimer_mask(), which should be called during a trap of
 		 * the EOI for the guest's VTimer interrupt handler.
 		 */
-		HV_EXIT_REASON_VTIMER_ACTIVATED,
+		VTimerActivated,
 		/*!
 		 * Unable to determine exit reason: this should not happen under normal
 		 * operation.
 		 */
-		HV_EXIT_REASON_UNKNOWN
+		Unknown
+	}
+
+	public enum ExceptionCode : uint {
+		TrappedWf_ = 0b000001, 
+		ServiceCall = 0b010101,
+		MonitorCall = 0b010111, 
+		MsrMrsTrap = 0b011000, 
+		InsnAbort = 0b100000, 
+		DataAbort = 0b100100, 
+		PcAlignmentFault = 0b100010, 
 	}
 
 	public enum Reg : uint {
@@ -64,6 +76,41 @@ namespace IronVisor {
 		FPCR,
 		FPSR,
 		CPSR,
+	}
+
+	public enum FpReg : uint {
+		Q0,
+		Q1,
+		Q2,
+		Q3,
+		Q4,
+		Q5,
+		Q6,
+		Q7,
+		Q8,
+		Q9,
+		Q10,
+		Q11,
+		Q12,
+		Q13,
+		Q14,
+		Q15,
+		Q16,
+		Q17,
+		Q18,
+		Q19,
+		Q20,
+		Q21,
+		Q22,
+		Q23,
+		Q24,
+		Q25,
+		Q26,
+		Q27,
+		Q28,
+		Q29,
+		Q30,
+		Q31,
 	}
 
 	public enum SysReg : ushort {
@@ -180,6 +227,11 @@ namespace IronVisor {
 		CNTV_CVAL_EL0 = 0xdf1a,
 		SP_EL1 = 0xe208,
 	}
+
+	public enum InterruptType {
+		Irq, 
+		Fiq, 
+	}
 	
 	public unsafe class Vcpu : IDisposable {
 		[StructLayout(LayoutKind.Sequential)]
@@ -197,8 +249,14 @@ namespace IronVisor {
 			Creator = Thread.CurrentThread;
 			hv_vcpu_create(out Id, out ExitStruct, IntPtr.Zero).Guard();
 			X = new(
-				index => this[(Reg) ((uint) Reg.X0 + index)], 
-				(index, value) => this[(Reg) ((uint) Reg.X0 + index)] = value
+				index => index == 31 ? 0 : this[(Reg) ((uint) Reg.X0 + index)], 
+				(index, value) => {
+					if(index != 31)
+						this[(Reg) ((uint) Reg.X0 + index)] = value;
+				});
+			Q = new(
+				index => this[(FpReg) index], 
+				(index, value) => this[(FpReg) index] = value
 			);
 		}
 
@@ -225,6 +283,14 @@ namespace IronVisor {
 			set => hv_vcpu_set_reg(Id, reg, value).Guard();
 		}
 
+		public Vector4 this[FpReg reg] {
+			get {
+				hv_vcpu_get_simd_fp_reg(Id, reg, out var value).Guard();
+				return value;
+			}
+			set => hv_vcpu_set_simd_fp_reg(Id, reg, value).Guard();
+		}
+
 		public ulong this[SysReg reg] {
 			get {
 				hv_vcpu_get_sys_reg(Id, reg, out var value).Guard();
@@ -237,7 +303,61 @@ namespace IronVisor {
 			get => this[Reg.PC];
 			set => this[Reg.PC] = value;
 		}
+		public ulong SP {
+			get => this[SysReg.SP_EL1];
+			set => this[SysReg.SP_EL1] = value;
+		}
+		public ulong FPCR {
+			get => this[Reg.FPCR];
+			set => this[Reg.FPCR] = value;
+		}
+		public ulong FPSR {
+			get => this[Reg.FPSR];
+			set => this[Reg.FPSR] = value;
+		}
+		public ulong CPSR {
+			get => this[Reg.CPSR];
+			set => this[Reg.CPSR] = value;
+		}
+
+		public bool TrapDebugExceptions {
+			get {
+				hv_vcpu_get_trap_debug_exceptions(Id, out var val).Guard();
+				return val;
+			}
+			set => hv_vcpu_set_trap_debug_exceptions(Id, value).Guard();
+		}
+		public bool TrapDebugRegisterAccesses {
+			get {
+				hv_vcpu_get_trap_debug_reg_accesses(Id, out var val).Guard();
+				return val;
+			}
+			set => hv_vcpu_set_trap_debug_reg_accesses(Id, value).Guard();
+		}
+
+		public bool IrqPending {
+			get {
+				hv_vcpu_get_pending_interrupt(Id, InterruptType.Irq, out var val).Guard();
+				return val;
+			}
+			set => hv_vcpu_set_pending_interrupt(Id, InterruptType.Irq, value).Guard();
+		}
+		
+		public bool FiqPending {
+			get {
+				hv_vcpu_get_pending_interrupt(Id, InterruptType.Fiq, out var val).Guard();
+				return val;
+			}
+			set => hv_vcpu_set_pending_interrupt(Id, InterruptType.Fiq, value).Guard();
+		}
+
+		public void ForceExit() {
+			var id = Id;
+			hv_vcpus_exit(ref id, 1).Guard();
+		}
+
 		public readonly Indexer<int, ulong> X;
+		public readonly Indexer<int, Vector4> Q;
 
 		[DllImport("Hypervisor.framework/Hypervisor")]
 		static extern HvReturn hv_vcpu_create(out ulong vcpu, out Exit* exit, IntPtr config);
@@ -252,12 +372,39 @@ namespace IronVisor {
 		static extern HvReturn hv_vcpu_set_reg(ulong vcpu, Reg reg, ulong value);
 		
 		[DllImport("Hypervisor.framework/Hypervisor")]
+		static extern HvReturn hv_vcpu_get_simd_fp_reg(ulong vcpu, FpReg reg, out Vector4 value);
+		
+		[DllImport("Hypervisor.framework/Hypervisor")]
+		static extern HvReturn hv_vcpu_set_simd_fp_reg(ulong vcpu, FpReg reg, Vector4 value);
+		
+		[DllImport("Hypervisor.framework/Hypervisor")]
 		static extern HvReturn hv_vcpu_get_sys_reg(ulong vcpu, SysReg reg, out ulong value);
 		
 		[DllImport("Hypervisor.framework/Hypervisor")]
 		static extern HvReturn hv_vcpu_set_sys_reg(ulong vcpu, SysReg reg, ulong value);
 		
 		[DllImport("Hypervisor.framework/Hypervisor")]
+		static extern HvReturn hv_vcpu_get_trap_debug_exceptions(ulong vcpu, out bool value);
+		
+		[DllImport("Hypervisor.framework/Hypervisor")]
+		static extern HvReturn hv_vcpu_set_trap_debug_exceptions(ulong vcpu, bool value);
+		
+		[DllImport("Hypervisor.framework/Hypervisor")]
+		static extern HvReturn hv_vcpu_get_trap_debug_reg_accesses(ulong vcpu, out bool value);
+		
+		[DllImport("Hypervisor.framework/Hypervisor")]
+		static extern HvReturn hv_vcpu_set_trap_debug_reg_accesses(ulong vcpu, bool value);
+		
+		[DllImport("Hypervisor.framework/Hypervisor")]
 		static extern HvReturn hv_vcpu_run(ulong vcpu);
+
+		[DllImport("Hypervisor.framework/Hypervisor")]
+		static extern HvReturn hv_vcpu_get_pending_interrupt(ulong vcpu, InterruptType type, out bool pending);
+		
+		[DllImport("Hypervisor.framework/Hypervisor")]
+		static extern HvReturn hv_vcpu_set_pending_interrupt(ulong vcpu, InterruptType type, bool pending);
+		
+		[DllImport("Hypervisor.framework/Hypervisor")]
+		static extern HvReturn hv_vcpus_exit(ref ulong vcpus, uint count);
 	}
 }

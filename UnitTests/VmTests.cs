@@ -7,25 +7,26 @@ namespace UnitTests {
 	public class VmTests {
 		[Test]
 		public void VmSetupTest() {
-			var vm = new Vm();
+			var vm = IVm.Create();
 			vm.Dispose();
 		}
 
 		[Test]
 		public void VmDisposeRecreateTest() {
-			using(var vm = new Vm()) {}
-			using(var vm = new Vm()) {}
+			using(var vm = IVm.Create()) {}
+			using(var vm = IVm.Create()) {}
 		}
 
 		[Test]
+		[Platform("MacOsX")]
 		public void VmDoubleTest() {
-			using var vm = new Vm();
-			Assert.Throws<BusyException>(() => new Vm());
+			using var vm = IVm.Create();
+			Assert.Throws<BusyException>(() => IVm.Create());
 		}
 
 		[Test]
 		public void VmMapBasic() {
-			using var vm = new Vm();
+			using var vm = IVm.Create();
 			var mem1 = vm.Map(0xDEAD0000, 0x10000, MemoryFlags.Read | MemoryFlags.Write);
 			var span = mem1.AsSpan<uint>();
 			span[0] = 0xDEADBEEF;

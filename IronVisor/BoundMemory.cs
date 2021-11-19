@@ -26,7 +26,7 @@ namespace IronVisor {
 
 		~BoundMemory() => Dispose(false);
 
-		public Span<T> AsSpan<T>() where T : struct => MemoryMarshal.Cast<byte, T>(Memory.Span);
+		public Span<T> AsSpan<T>(int offset = 0) where T : struct => MemoryMarshal.Cast<byte, T>(Memory.Span[offset..]);
 
 		void Dispose(bool disposing) {
 			OnDispose();

@@ -7,23 +7,23 @@ namespace UnitTests {
 	public class VcpuTests {
 		[Test]
 		public void VcpuSetupTest() {
-			using var vm = new Vm();
+			using var vm = IVm.Create();
 			var vcpu = vm.CreateVcpu();
-			vcpu.Destroy();
+			vcpu.Dispose();
 		}
 		
 		[Test]
 		public void VcpuNonDestroyedTest() {
-			var vm = new Vm();
+			var vm = IVm.Create();
 			var vcpu = vm.CreateVcpu();
 			Assert.Throws<HvException>(() => vm.Dispose());
-			vcpu.Destroy();
+			vcpu.Dispose();
 			vm.Dispose();
 		}
 
 		[Test]
 		public void VcpuRegisterAccessTest() {
-			using var vm = new Vm();
+			using var vm = IVm.Create();
 			using var vcpu = vm.CreateVcpu();
 			vcpu[Reg.X0] = 0xDEADBEEF;
 			vcpu.X[1] = 0xCAFEBABE;
@@ -35,7 +35,7 @@ namespace UnitTests {
 
 		[Test]
 		public void VcpuExecTest() {
-			using var vm = new Vm();
+			using var vm = IVm.Create();
 			using var vcpu = vm.CreateVcpu();
 			vcpu.X[0] = 0x1000;
 			vcpu.X[1] = 0x1337;
